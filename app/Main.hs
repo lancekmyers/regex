@@ -1,53 +1,45 @@
 module Main where
 
 import Regex 
+import Parser 
 import qualified System.Environment as System
-import qualified Data.ByteString.Lazy.Char8 as BS
+import qualified Data.ByteString.Char8 as BS
+import System.IO.Posix.MMap ( unsafeMMapFile ) 
+import System.IO (hFlush, stdout)
 
--- | build a regex that matches words given wordle state 
--- >>> wordle "_a___" "<yellow lettters here>" "grey letters here"
-wordle :: String -> String -> String -> Regex 
-wordle green gray yellow = no_gray `and_` contains_yellow
+
+debugger :: String -> IO () 
+debugger reStr = print re >> interaction 
   where 
-    gr = not_ $ classFromList gray
-    contains_yellow = concatAnd [ 
-      (star NotNull) `cat` Sym c `cat` (star NotNull)
-      | c <- yellow ]
-    no_gray = concatCat [ case c of 
-      '_' -> gr
-      c   -> Sym c
-      | c <- green ]
+    re = parseRE reStr
+    interaction = do 
+      putStr "»» " >> hFlush stdout
+      line <- getLine
+      case line of 
+        ":q" -> putStrLn "Bye!"
+        ':':'r':'e':' ':rest -> debugger rest
+        _ -> if matches (BS.pack line) re 
+          then putStrLn "Match" >> interaction
+          else putStrLn "Fail"  >> interaction
 
--- | regex that matches only the word havoc 
-havoc = concatCat $ Sym <$> "havoc"
 
--- | regex that matches words with the right letters in the right spots, 
--- but does not check the yellow or gray letter conditions 
-wordleGreen green = concatCat [ case c of 
-      '_' -> NotNull
-      c -> Sym c 
-    | c <- green 
-  ]
-
--- | regex that matches words on green and gray conditions 
-wordleGreenGray green gray = no_gray
-  where 
-    grayLetters = classFromList gray
-    no_gray = concatCat [ case c of 
-      '_' -> not_ grayLetters
-      c   -> Sym c
-      | c <- green ]
+finder :: String -> String -> IO ()
+finder reStr fname = do 
+  let re = parseRE reStr 
+  
+  fileLines <- BS.lines <$> unsafeMMapFile fname
+  let found = filter (\l -> matches l re) fileLines 
+  
+  mapM BS.putStrLn found
+  pure ()
 
 
 main :: IO ()
 main = do
   args <- System.getArgs 
-  let re = case args of {
-    [green] -> wordleGreen green;
-    [green, gray] -> wordleGreenGray green gray  ;
-    [green, gray, yellow] -> wordle green gray yellow ;
-    _ -> error "Invalid arguments";
+
+  case args of {
+    ["debug", givenRE] -> debugger givenRE;
+    [givenRE, fname] -> finder givenRE fname; 
+    _ -> error "Bad arguments\nExpects <regular-exp> <file-name>"
   }
-  dict <- BS.lines <$> BS.readFile "/usr/share/dict/words"
-  let solns = filter (\l -> matches l re) dict 
-  BS.putStrLn $ BS.intercalate (BS.pack "\n") solns 

@@ -1,7 +1,7 @@
 {-# LANGUAGE PatternSynonyms, BangPatterns #-}
 {-# LANGUAGE ViewPatterns, MonadComprehensions #-}
 
-module Regex (pattern Sym, pattern Null, pattern NotNull, Regex, 
+module Regex (pattern Sym, pattern Null, pattern NotNull, Regex(Empty), 
     cat, or_, and_, concatAnd, concatCat, concatOr, 
     star, not_, matches, 
     classFromList, fromString
@@ -15,7 +15,7 @@ import Data.Foldable (Foldable(fold, foldl', foldr, foldr'))
 import Control.Applicative (Applicative(liftA2))
 import Set (Set, union, intersect, member, compl)
 import qualified Set as Set 
-import qualified Data.ByteString.Lazy.Char8 as BS 
+import qualified Data.ByteString.Char8 as BS 
 
 -- | Regex for single character/symbol 
 pattern Sym :: Char -> Regex 
@@ -41,7 +41,22 @@ data Regex
     -- | Capture Regex -- Is this a good idea??
     | Str BS.ByteString 
     | Empty 
-    deriving (Show, Eq, Ord)
+    deriving (Eq, Ord)
+
+instance Show Regex where 
+    show (Cat res) = "(•" ++ (foldl (\acc re -> acc ++ ' ' : show re) "" res) ++ ")"
+    show (And res) = "(∧" ++ foldl (\acc re -> ' ' : show re ++ acc) "" res ++ ")"
+    show (Or  res) = "(∨" ++ foldl (\acc re -> ' ' : show re ++ acc) "" res ++ ")"
+    show (Not re) = "(¬ " ++ show re ++ ")"
+    show (Star re) = "(* " ++ show re ++ ")"  
+    show (Str str) = show str 
+    show Empty = "ε"
+    show Null = "∅"
+    show (Sym c) = show c 
+    show NotNull = "∑" 
+    show (CS cs) = show cs
+
+
 
 -- | Checks if regex are equal-ish 
 -- This is not actually equality, might sub out for a different approximate 
@@ -78,6 +93,7 @@ cat (Star NotNull) (Star NotNull) = (Star NotNull)
 cat (Str a) (Str b) = Str (a <> b)
 cat (Sym a) (Str b) = Str (BS.cons a b)
 cat (Str a) (Sym b) = Str (BS.snoc a b)
+cat (Sym a) (Sym b) = Str (BS.pack [a,b])
 cat (Cat r) (Cat t) = {-# SCC seq_concat #-} Cat $ r Seq.>< t
 cat (Cat r) t = {-# SCC seq_snoc #-} Cat $ r Seq.|> t 
 cat r (Cat t) = {-# SCC seq_cons #-} Cat $ r Seq.<| t
@@ -214,11 +230,14 @@ matches txt (Str txt') = txt == txt'
 matches txt (Cat (Str txt' Seq.:<| rest)) = case BS.stripPrefix txt' txt of 
     Just rem -> matches rem (Cat rest)
     Nothing  -> False
-matches txt pat@(Cat ((Star NotNull) Seq.:<| rest@(Str txt' Seq.:<| _)))
-    | BS.length txt >= BS.length txt' = case BS.elemIndex (BS.head txt') txt of 
-        Just jmp -> matches (BS.drop jmp txt) (Cat rest `or_` pat)
-        Nothing -> False  
-    | otherwise = False
+matches txt pat@(Cat ((Star NotNull) Seq.:<| (Str str Seq.:<| rest))) = 
+    let (prefix, txt') = BS.breakSubstring str txt in 
+        if BS.null txt' then False
+        else matches (BS.drop (BS.length str) txt') $ (Cat rest) `or_` pat 
+--    | BS.length txt >= BS.length txt' = case BS.elemIndex (BS.head txt') txt of 
+--        Just jmp -> matches (BS.drop jmp txt) (Cat rest `or_` pat)
+--        Nothing -> False  
+--    | otherwise = False
 matches txt pat@(Cat ((Star NotNull) Seq.:<| rest@(Sym c Seq.:<| _))) = 
     case BS.elemIndex c txt of 
         Just jmp -> matches (BS.drop jmp txt) (Cat rest `or_` pat)
